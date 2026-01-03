@@ -188,42 +188,6 @@ class WhaleWatcher:
             print(f"Removed address: {address}")
 
 
-def get_demo_whale_trades() -> List[Dict]:
-    """Generate demo whale trade data for testing."""
-    return [
-        {
-            "whale_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f43127",
-            "market_id": "POLY_BTC_100K",
-            "market_title": "Bitcoin > $100,000 by Dec 2025",
-            "outcome": "YES",
-            "side": "buy",
-            "amount_usdc": 15000,
-            "price": 0.42,
-            "timestamp": "2026-01-03T10:15:00",
-        },
-        {
-            "whale_address": "0x8ba1f109551bD432803012645Ac136ddd64DBA72",
-            "market_id": "POLY_FED_RATE",
-            "market_title": "Fed cuts rates in Q1 2026",
-            "outcome": "NO",
-            "side": "buy",
-            "amount_usdc": 25000,
-            "price": 0.65,
-            "timestamp": "2026-01-03T09:45:00",
-        },
-        {
-            "whale_address": "0xAb5801a7D398351b8bE11C439e05C5B3259aec9B",
-            "market_id": "POLY_SUPERBOWL",
-            "market_title": "Chiefs win Super Bowl 2026",
-            "outcome": "YES",
-            "side": "buy",
-            "amount_usdc": 50000,
-            "price": 0.35,
-            "timestamp": "2026-01-03T08:30:00",
-        },
-    ]
-
-
 async def main():
     """Main entry point for standalone whale watcher."""
     print("Starting Whale Watcher...")

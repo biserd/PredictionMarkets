@@ -267,80 +267,12 @@ def scan_for_arbitrage() -> pd.DataFrame:
     return df
 
 
-def get_demo_opportunities() -> pd.DataFrame:
-    """Generate demo data for testing when APIs are unavailable."""
-    demo_data = [
-        {
-            "poly_market_id": "POLY_001",
-            "kalshi_market_id": "KALSHI_001",
-            "market_title": "Will Bitcoin exceed $100,000 by end of 2025?",
-            "match_score": 92,
-            "strategy": "Buy YES (Poly) + Buy NO (Kalshi)",
-            "poly_price": 0.45,
-            "kalshi_price": 0.52,
-            "total_cost": 0.97,
-            "spread": 0.03,
-            "roi_percent": 3.09,
-            "min_liquidity": 5000,
-            "poly_liquidity": 12500,
-            "kalshi_liquidity": 5000,
-        },
-        {
-            "poly_market_id": "POLY_002",
-            "kalshi_market_id": "KALSHI_002",
-            "market_title": "Fed rate cut in January 2026?",
-            "match_score": 88,
-            "strategy": "Buy NO (Poly) + Buy YES (Kalshi)",
-            "poly_price": 0.38,
-            "kalshi_price": 0.59,
-            "total_cost": 0.97,
-            "spread": 0.03,
-            "roi_percent": 3.09,
-            "min_liquidity": 8200,
-            "poly_liquidity": 15000,
-            "kalshi_liquidity": 8200,
-        },
-        {
-            "poly_market_id": "POLY_003",
-            "kalshi_market_id": "KALSHI_003",
-            "market_title": "Super Bowl LXII Winner: Kansas City Chiefs",
-            "match_score": 95,
-            "strategy": "Buy YES (Poly) + Buy NO (Kalshi)",
-            "poly_price": 0.32,
-            "kalshi_price": 0.65,
-            "total_cost": 0.97,
-            "spread": 0.03,
-            "roi_percent": 3.09,
-            "min_liquidity": 3500,
-            "poly_liquidity": 8000,
-            "kalshi_liquidity": 3500,
-        },
-        {
-            "poly_market_id": "POLY_004",
-            "kalshi_market_id": "KALSHI_004",
-            "market_title": "Ethereum merge to PoS completed successfully",
-            "match_score": 85,
-            "strategy": "Buy YES (Poly) + Buy NO (Kalshi)",
-            "poly_price": 0.88,
-            "kalshi_price": 0.09,
-            "total_cost": 0.97,
-            "spread": 0.03,
-            "roi_percent": 3.09,
-            "min_liquidity": 25000,
-            "poly_liquidity": 45000,
-            "kalshi_liquidity": 25000,
-        },
-    ]
-    return pd.DataFrame(demo_data)
-
-
 if __name__ == "__main__":
     print("Starting arbitrage scan...")
     df = scan_for_arbitrage()
     
     if df.empty:
-        print("\nNo arbitrage opportunities found. Loading demo data...")
-        df = get_demo_opportunities()
-    
-    print(f"\nFound {len(df)} opportunities:")
-    print(df.to_string())
+        print("\nNo arbitrage opportunities found meeting the threshold criteria.")
+    else:
+        print(f"\nFound {len(df)} opportunities:")
+        print(df.to_string())

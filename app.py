@@ -10,7 +10,6 @@ import config
 import database
 import arb_scanner
 import telegram_bot
-from whale_watch import get_demo_whale_trades
 
 st.set_page_config(
     page_title="Project Alpha - Prediction Market Engine",
@@ -117,26 +116,19 @@ with tab1:
             with st.spinner("Scanning Polymarket and Kalshi..."):
                 try:
                     df = arb_scanner.scan_for_arbitrage()
-                    if df.empty:
-                        df = arb_scanner.get_demo_opportunities()
-                        st.info("Using demo data - Live API data unavailable")
                     st.session_state.opportunities = df
                     st.session_state.last_scan = datetime.now()
+                    if df.empty:
+                        st.warning("No arbitrage opportunities found above the threshold.")
+                    else:
+                        st.success(f"Found {len(df)} opportunities!")
                 except Exception as e:
                     st.error(f"Scan failed: {e}")
-                    st.session_state.opportunities = arb_scanner.get_demo_opportunities()
-                    st.info("Loaded demo data due to API error")
     
     with col2:
-        if st.button("📱 Load Demo Data", use_container_width=True):
-            st.session_state.opportunities = arb_scanner.get_demo_opportunities()
-            st.session_state.last_scan = datetime.now()
-            st.success("Demo data loaded")
-    
-    with col3:
         st.session_state.auto_refresh = st.checkbox("Auto-Refresh (5s)")
     
-    with col4:
+    with col3:
         if st.session_state.last_scan:
             st.caption(f"Last scan: {st.session_state.last_scan.strftime('%H:%M:%S')}")
     
@@ -209,26 +201,18 @@ with tab1:
                 else:
                     st.error("Failed to send alert")
     else:
-        st.info("Click 'Scan Markets' or 'Load Demo Data' to view arbitrage opportunities")
+        st.info("Click 'Scan Markets' to fetch live arbitrage opportunities from Polymarket and Kalshi")
 
 with tab2:
     st.header("Whale Trade Monitor")
     
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        if st.button("🔄 Load Recent Whale Trades", type="primary"):
-            db_trades = database.get_recent_whale_trades(50)
-            if db_trades:
-                st.session_state.whale_trades = db_trades
-            else:
-                st.session_state.whale_trades = get_demo_whale_trades()
-                st.info("Using demo whale trades - WebSocket monitoring requires live connection")
-    
-    with col2:
-        if st.button("📱 Load Demo Whales"):
-            st.session_state.whale_trades = get_demo_whale_trades()
-            st.success("Demo whale trades loaded")
+    if st.button("🔄 Load Recent Whale Trades", type="primary"):
+        db_trades = database.get_recent_whale_trades(50)
+        st.session_state.whale_trades = db_trades
+        if db_trades:
+            st.success(f"Loaded {len(db_trades)} recent whale trades")
+        else:
+            st.warning("No whale trades recorded yet. Add whale addresses and run the whale watcher to capture trades.")
     
     st.divider()
     
@@ -372,8 +356,6 @@ if st.session_state.auto_refresh:
     time.sleep(config.REFRESH_INTERVAL)
     try:
         df = arb_scanner.scan_for_arbitrage()
-        if df.empty:
-            df = arb_scanner.get_demo_opportunities()
         st.session_state.opportunities = df
         st.session_state.last_scan = datetime.now()
     except Exception as e:

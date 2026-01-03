@@ -4,10 +4,8 @@ Personal Prediction Market Engine Settings
 """
 
 # Whale wallet addresses to monitor on Polymarket (Polygon)
-WHALE_ADDRESSES = [
-    "0x1234567890abcdef1234567890abcdef12345678",  # Example whale 1
-    "0xabcdef1234567890abcdef1234567890abcdef12",  # Example whale 2
-]
+# Add real whale addresses via the dashboard or directly here
+WHALE_ADDRESSES = []
 
 # Minimum trade size to alert (in USDC)
 MIN_TRADE_SIZE = 500
