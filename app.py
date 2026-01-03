@@ -119,7 +119,7 @@ with tab1:
                     st.session_state.opportunities = df
                     st.session_state.last_scan = datetime.now()
                     if df.empty:
-                        st.warning("No arbitrage opportunities found above the threshold.")
+                        st.info("No arbitrage opportunities found. This is normal when Polymarket and Kalshi don't have overlapping markets for the same events.")
                     else:
                         st.success(f"Found {len(df)} opportunities!")
                 except Exception as e:
@@ -202,6 +202,40 @@ with tab1:
                     st.error("Failed to send alert")
     else:
         st.info("Click 'Scan Markets' to fetch live arbitrage opportunities from Polymarket and Kalshi")
+    
+    st.divider()
+    with st.expander("📊 Market Explorer - View Raw Data"):
+        st.caption("Browse markets from both platforms to see available data")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Load Polymarket Markets"):
+                with st.spinner("Fetching from Polymarket..."):
+                    poly_markets = arb_scanner.fetch_polymarket_markets()
+                    st.session_state['poly_markets'] = poly_markets
+        
+        with col2:
+            if st.button("Load Kalshi Markets"):
+                with st.spinner("Fetching from Kalshi..."):
+                    kalshi_markets = arb_scanner.fetch_kalshi_markets()
+                    st.session_state['kalshi_markets'] = kalshi_markets
+        
+        if 'poly_markets' in st.session_state and st.session_state['poly_markets']:
+            st.subheader(f"Polymarket ({len(st.session_state['poly_markets'])} markets)")
+            poly_df = pd.DataFrame(st.session_state['poly_markets'][:20])
+            if not poly_df.empty:
+                poly_df['yes_price'] = poly_df['yes_price'].apply(lambda x: f"{x:.2f}")
+                poly_df['no_price'] = poly_df['no_price'].apply(lambda x: f"{x:.2f}")
+                st.dataframe(poly_df[['title', 'yes_price', 'no_price', 'liquidity']], hide_index=True, use_container_width=True)
+        
+        if 'kalshi_markets' in st.session_state and st.session_state['kalshi_markets']:
+            st.subheader(f"Kalshi ({len(st.session_state['kalshi_markets'])} markets)")
+            kalshi_df = pd.DataFrame(st.session_state['kalshi_markets'][:20])
+            if not kalshi_df.empty:
+                kalshi_df['yes_price'] = kalshi_df['yes_price'].apply(lambda x: f"{x:.2f}")
+                kalshi_df['no_price'] = kalshi_df['no_price'].apply(lambda x: f"{x:.2f}")
+                st.dataframe(kalshi_df[['title', 'yes_price', 'no_price', 'category']], hide_index=True, use_container_width=True)
 
 with tab2:
     st.header("Whale Trade Monitor")

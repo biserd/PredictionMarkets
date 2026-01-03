@@ -5,6 +5,7 @@ Fetches prices from Polymarket and Kalshi, finds arbitrage opportunities
 
 import requests
 import pandas as pd
+import json
 from thefuzz import fuzz
 from typing import List, Dict, Tuple, Optional
 import config
@@ -25,35 +26,54 @@ def fetch_polymarket_markets() -> List[Dict]:
     try:
         url = f"{config.POLYMARKET_API_URL}/markets"
         params = {
+            "active": "true",
             "closed": "false",
             "limit": 100,
         }
         proxies = get_polymarket_proxies()
-        response = requests.get(url, params=params, timeout=10, proxies=proxies)
+        response = requests.get(url, params=params, timeout=15, proxies=proxies)
         response.raise_for_status()
         markets = response.json()
         
         processed = []
         for market in markets:
-            if market.get("outcomes") and len(market.get("outcomePrices", [])) >= 2:
-                try:
-                    prices = market.get("outcomePrices", [])
-                    yes_price = float(prices[0]) if prices else 0
-                    no_price = float(prices[1]) if len(prices) > 1 else 0
+            try:
+                outcomes_raw = market.get("outcomes", "[]")
+                prices_raw = market.get("outcomePrices", "[]")
+                
+                if isinstance(outcomes_raw, str):
+                    outcomes = json.loads(outcomes_raw)
+                else:
+                    outcomes = outcomes_raw
                     
-                    processed.append({
-                        "id": market.get("id", ""),
-                        "title": market.get("question", market.get("title", "")),
-                        "category": market.get("category", ""),
-                        "yes_price": yes_price,
-                        "no_price": no_price,
-                        "liquidity": float(market.get("liquidityNum", 0)),
-                        "volume": float(market.get("volumeNum", 0)),
-                        "source": "polymarket"
-                    })
-                except (ValueError, TypeError, IndexError):
+                if isinstance(prices_raw, str):
+                    prices = json.loads(prices_raw)
+                else:
+                    prices = prices_raw
+                
+                if not outcomes or len(prices) < 2:
                     continue
+                    
+                yes_price = float(prices[0]) if prices else 0
+                no_price = float(prices[1]) if len(prices) > 1 else 0
+                
+                liquidity = market.get("liquidityNum") or market.get("liquidity") or 0
+                volume = market.get("volumeNum") or market.get("volume") or 0
+                
+                processed.append({
+                    "id": market.get("id", ""),
+                    "title": market.get("question", market.get("title", "")),
+                    "category": market.get("category", ""),
+                    "yes_price": yes_price,
+                    "no_price": no_price,
+                    "liquidity": float(liquidity) if liquidity else 0,
+                    "volume": float(volume) if volume else 0,
+                    "source": "polymarket"
+                })
+            except (ValueError, TypeError, IndexError, json.JSONDecodeError) as e:
+                continue
         
+        print(f"Polymarket: Processed {len(processed)} markets from {len(markets)} total")
         return processed
     except requests.RequestException as e:
         print(f"Error fetching Polymarket markets: {e}")
@@ -61,9 +81,9 @@ def fetch_polymarket_markets() -> List[Dict]:
 
 
 def fetch_kalshi_markets() -> List[Dict]:
-    """Fetch active markets from Kalshi API."""
+    """Fetch active markets from Kalshi API using events endpoint for better matches."""
     try:
-        url = f"{config.KALSHI_API_URL}/markets"
+        url = f"{config.KALSHI_API_URL}/events"
         headers = {
             "Accept": "application/json",
         }
@@ -75,32 +95,58 @@ def fetch_kalshi_markets() -> List[Dict]:
         params = {
             "status": "open",
             "limit": 100,
+            "with_nested_markets": "true",
         }
         
-        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response = requests.get(url, headers=headers, params=params, timeout=15)
         response.raise_for_status()
         data = response.json()
-        markets = data.get("markets", [])
+        events = data.get("events", [])
         
         processed = []
-        for market in markets:
-            try:
-                yes_price = float(market.get("yes_bid", 0)) / 100
-                no_price = float(market.get("no_bid", 0)) / 100
-                
-                processed.append({
-                    "id": market.get("ticker", ""),
-                    "title": market.get("title", ""),
-                    "category": market.get("category", ""),
-                    "yes_price": yes_price,
-                    "no_price": no_price,
-                    "liquidity": float(market.get("volume", 0)),
-                    "volume": float(market.get("volume_24h", 0)),
-                    "source": "kalshi"
-                })
-            except (ValueError, TypeError):
-                continue
+        for event in events:
+            event_title = event.get("title", "")
+            event_category = event.get("category", "")
+            markets = event.get("markets", [])
+            
+            for market in markets:
+                try:
+                    yes_ask_str = market.get("yes_ask_dollars", "0")
+                    no_ask_str = market.get("no_ask_dollars", "0")
+                    yes_bid_str = market.get("yes_bid_dollars", "0")
+                    no_bid_str = market.get("no_bid_dollars", "0")
+                    
+                    yes_price = float(yes_ask_str) if yes_ask_str else 0
+                    no_price = float(no_ask_str) if no_ask_str else 0
+                    
+                    if yes_price == 0:
+                        yes_price = float(yes_bid_str) if yes_bid_str else 0
+                    if no_price == 0:
+                        no_price = float(no_bid_str) if no_bid_str else 0
+                    
+                    if yes_price == 0 and no_price == 0:
+                        continue
+                    
+                    liquidity_str = market.get("liquidity_dollars", "0")
+                    liquidity = float(liquidity_str) if liquidity_str else 0
+                    
+                    market_title = market.get("title") or market.get("subtitle") or event_title
+                    
+                    processed.append({
+                        "id": market.get("ticker", ""),
+                        "title": market_title,
+                        "event_title": event_title,
+                        "category": event_category,
+                        "yes_price": yes_price,
+                        "no_price": no_price,
+                        "liquidity": liquidity,
+                        "volume": float(market.get("volume", 0)) if market.get("volume") else 0,
+                        "source": "kalshi"
+                    })
+                except (ValueError, TypeError):
+                    continue
         
+        print(f"Kalshi: Processed {len(processed)} markets from {len(events)} events")
         return processed
     except requests.RequestException as e:
         print(f"Error fetching Kalshi markets: {e}")
@@ -114,22 +160,40 @@ def fuzzy_match_markets(
 ) -> List[Tuple[Dict, Dict, int]]:
     """
     Match markets between Polymarket and Kalshi using fuzzy string matching.
+    Uses token_sort_ratio as primary matcher with word overlap requirements.
     Returns list of (poly_market, kalshi_market, match_score) tuples.
     """
     if threshold is None:
         threshold = config.FUZZY_MATCH_THRESHOLD
     
+    stopwords = {'will', 'the', 'be', 'in', 'to', 'a', 'an', 'of', 'for', 'and', 'or', 'is', 'are', 'by', 'on', 'at', 'with', 'before', 'after'}
+    
     matches = []
     
     for poly in poly_markets:
         poly_title = poly["title"].lower().strip()
+        poly_words = set(poly_title.split()) - stopwords
+        poly_significant = {w for w in poly_words if len(w) > 3}
         best_match = None
         best_score = 0
         
         for kalshi in kalshi_markets:
             kalshi_title = kalshi["title"].lower().strip()
+            kalshi_event = kalshi.get("event_title", "").lower().strip()
+            kalshi_words = (set(kalshi_title.split()) | set(kalshi_event.split())) - stopwords
+            kalshi_significant = {w for w in kalshi_words if len(w) > 3}
             
-            score = fuzz.token_sort_ratio(poly_title, kalshi_title)
+            common_significant = poly_significant & kalshi_significant
+            if len(common_significant) < 1:
+                continue
+            
+            score1 = fuzz.token_sort_ratio(poly_title, kalshi_title)
+            score2 = fuzz.token_sort_ratio(poly_title, kalshi_event)
+            
+            score = max(score1, score2)
+            
+            if len(common_significant) >= 2:
+                score = min(score + 5, 100)
             
             if score > best_score and score >= threshold:
                 best_score = score

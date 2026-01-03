@@ -15,7 +15,8 @@ ARB_THRESHOLD = 0.02  # Minimum spread to trigger alert (2%)
 MIN_LIQUIDITY = 100   # Minimum liquidity in USD
 
 # Fuzzy matching threshold (0-100)
-FUZZY_MATCH_THRESHOLD = 80
+# Balance between precision (high) and recall (low)
+FUZZY_MATCH_THRESHOLD = 70
 
 # API refresh interval in seconds
 REFRESH_INTERVAL = 5
