@@ -1,0 +1,71 @@
+Here is a complete Business Requirement Document (BRD) tailored for a Personal Proof-of-Concept (POC).
+This document is structured to be "fed" directly into an AI coding agent (like Cursor, Windsurf, or Replit) to help you build the system module-by-module.
+Business Requirement Document (BRD)
+Project Name: Project Alpha (Personal Prediction Market Engine)
+Version: 1.0
+Type: Personal Proof-of-Concept (POC) / Quantitative Trading Tool
+1. Executive Summary
+The goal of Project Alpha is to develop a lightweight, self-hosted trading engine that automates the detection and execution of high-probability trades on prediction markets (Polymarket and Kalshi). Unlike a SaaS product, this system prioritizes low latency, privacy, and personal utility over scalability or multi-user management.
+The system will focus on two core alpha strategies identified in previous research:
+ * Cross-Venue Arbitrage: exploiting price discrepancies between regulated (Kalshi) and crypto (Polymarket) venues.[1]
+ * Whale Copy-Trading: Mirroring high-conviction trades from specific wallet addresses on the Polygon blockchain.[2]
+2. Project Scope
+2.1 In-Scope
+ * Dashboard: A local web interface (Streamlit) to visualize live arbitrage spreads.
+ * Scanner: A backend service that polls Polymarket and Kalshi APIs for "Risk-Free" yields (YES + NO < $1.00).
+ * Copy-Trader: A headless script monitoring specific wallet addresses for OrderFill events.
+ * Alerting: Telegram integration to notify the user of opportunities without auto-execution (human-in-the-loop).
+ * Execution: Optional "1-click" trade execution for arbitrage.
+2.2 Out-of-Scope (for POC)
+ * User Management / Authentication (Single user only).
+ * Payment Gateways / Subscription Models.
+ * Complex Mobile App (Telegram acts as the mobile interface).
+ * Historical Backtesting Engine (Focus is on live forward-testing).
+3. Functional Requirements
+3.1 Module A: The Arbitrage Scanner
+Goal: Identify markets where the combined price of opposite outcomes across venues guarantees a profit.
+ * REQ-A1 (Data Ingestion): The system must fetch "Yes/No" market prices from Polymarket (via GraphQL/CLOB) and Kalshi (via v2 API) every 3-5 seconds.
+ * REQ-A2 (Normalization): The system must implement a "Fuzzy Matcher" to link events with different naming conventions (e.g., "Trump vs Harris" on Poly vs "Presidential Debate" on Kalshi).[1]
+ * REQ-A3 (Spread Calculation):
+   * Formula: Spread = 1.00 - (Price_Poly_Yes + Price_Kalshi_No) - Estimated_Fees
+   * If Spread > Threshold (e.g., 0.02), trigger an alert.
+ * REQ-A4 (Liquidity Filter): Ignore opportunities where available liquidity is less than $100 to prevent slippage.
+3.2 Module B: The Copy-Trader Watchdog
+Goal: Detect when a "Smart Money" wallet enters a position before the broader market reacts.
+ * REQ-B1 (Whale Watching): The system must accept a list of 0x... addresses to monitor.
+ * REQ-B2 (Event Listening): The system must connect to the Polymarket WebSocket (wss://ws-subscriptions-clob.polymarket.com/ws) and subscribe to OrderFill or Trade events for the target addresses.[2]
+ * REQ-B3 (Filtering): The system must filter out small trades (e.g., < $500) to reduce noise.
+ * REQ-B4 (Contextual Alerting): When a trade is detected, fetch the market title and current probability to provide context in the alert (e.g., "Whale X bought 10k YES on Bitcoin > 100k").
+3.3 Module C: User Interface & Alerts
+Goal: Provide a "Cockpit" for the user to view data and receive signals.
+ * REQ-C1 (Streamlit Dashboard): A single-page view showing a table of active Arbitrage Opportunities, sorted by ROI.
+ * REQ-C2 (Telegram Bot): A bot that pushes notifications to a private channel.
+   * Format: 🚨 ARB OPPORTUNITY | Buy YES (Poly) @ 40¢ | Buy NO (Kalshi) @ 58¢ | Profit: 2%
+4. Non-Functional Requirements
+ * NFR-1 (Latency): The Copy-Trader watchdog must process a blockchain event and send a notification within 2 seconds.
+ * NFR-2 (Geo-Compliance): All Polymarket API requests must route through a Netherlands/Non-US Proxy to avoid IP bans.
+ * NFR-3 (Security): API Keys (Kalshi) and Private Keys (Polygon) must be stored in a local .env file and never committed to git.
+ * NFR-4 (Reliability): The system must auto-reconnect to WebSockets upon disconnection.
+5. Technical Architecture
+ * Language: Python 3.10+ (Chosen for rich data libraries pandas, ccxt, web3.py).
+ * Frontend: Streamlit (Local dashboard).
+ * Database: SQLite (Lightweight, local file-based storage for whale lists and trade history).
+ * Network: requests for REST, websockets for streaming.
+ * Infrastructure: Docker Compose (Service 1: Scanner, Service 2: Streamlit UI).
+6. "Vibe Coding" Implementation Prompts
+Use these prompts in Cursor/Windsurf to generate the code for this BRD.
+Phase 1: The Scanner (Arbitrage)
+> "Act as a Python Quantitative Developer. Create a script called arb_scanner.py. It needs to fetch active markets from Polymarket's Gamma API and Kalshi's v2 API. Focus only on 'Sports' category for now. Store the results in a Pandas DataFrame. Implement a function using the thefuzz library to fuzzy match event titles between the two platforms. Print any matches where the combined price of YES on one and NO on the other is less than 0.99. Use a .env file for API keys."
+> 
+Phase 2: The Watchdog (Copy Trading)
+> "Act as a Blockchain Engineer. Create a script called whale_watch.py. It should connect to the Polymarket CLOB WebSocket. I want to monitor a specific list of wallet addresses defined in config.py. When one of these addresses executes a 'Buy' order, parse the JSON message to extract the Market Name, Outcome (Yes/No), and Amount USDC. Send this summary to a Telegram chat using the python-telegram-bot library."
+> 
+Phase 3: The Dashboard (UI)
+> "Act as a Frontend Developer. Create a dashboard.py using Streamlit. It should read the data generated by arb_scanner.py (which you should modify to save to a opportunities.csv file). Display the arbitrage opportunities in a data grid. Highlight rows with ROI > 1% in green. Add a 'Refresh' button that triggers the scanner script to run again."
+> 
+7. Roadmap
+ * Day 1: Set up Python environment, Docker, and get API keys (Polymarket + Kalshi).
+ * Day 2: Build Module A (Scanner) and verify you can see live spreads.
+ * Day 3: Build Module B (Watchdog) and test it by watching a high-volume address.
+ * Day 4: Build Module C (Streamlit) to visualize the data.
+ * Day 5: Paper Trade (Simulate execution) to verify PnL math.
