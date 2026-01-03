@@ -1,0 +1,35 @@
+[Unit]
+Description=Polymarket Complete-Set Arbitrage Bot
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arbbot
+Group=arbbot
+WorkingDirectory=/home/arbbot/arb-bot
+Environment="PATH=/home/arbbot/arb-bot/venv/bin:/usr/bin"
+EnvironmentFile=/home/arbbot/arb-bot/.env
+
+# Run the bot in paper mode by default
+ExecStart=/home/arbbot/arb-bot/venv/bin/python -m src.cli.commands run --paper -c config.yaml
+
+# Restart policy - restart on failure with backoff
+Restart=on-failure
+RestartSec=30
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# Logging
+StandardOutput=append:/var/log/arbbot/output.log
+StandardError=append:/var/log/arbbot/error.log
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/arbbot/arb-bot /var/log/arbbot
+
+[Install]
+WantedBy=multi-user.target
