@@ -1,0 +1,43 @@
+venue:
+  name: mock
+  api_url: http://localhost
+  ws_url: ws://localhost
+
+markets:
+  - mock-market-1
+  - mock-market-2
+  - mock-market-3
+
+strategy:
+  min_edge: 0.005
+  cost_buffer: 0.005
+  min_depth: 10
+
+execution:
+  order_size: 10
+  max_attempts_per_round: 3
+  order_timeout_seconds: 5.0
+  max_inflight_seconds: 30.0
+  cooldown_seconds: 1.0
+
+risk:
+  max_daily_notional: 1000
+  max_open_positions: 10
+  halt_on_partial_fill: false
+  max_partial_fills_per_hour: 5
+  max_rejects_per_hour: 10
+  max_ws_disconnects_per_hour: 5
+
+data:
+  sqlite_path: arb_ledger.db
+  log_level: INFO
+  log_json: false
+
+websocket:
+  reconnect_delay_initial: 1.0
+  reconnect_delay_max: 60.0
+  reconnect_backoff_factor: 2.0
+  heartbeat_interval: 30.0
+  snapshot_on_reconnect: true
+
+paper_mode: true

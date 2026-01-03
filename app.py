@@ -1,18 +1,18 @@
 """
-Project Alpha - Streamlit Dashboard
-Personal Prediction Market Engine UI
+Project Alpha - Complete-Set Arbitrage Bot Dashboard
+Streamlit interface for monitoring the arbitrage bot.
 """
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import config
-import database
-import arb_scanner
-import telegram_bot
+import subprocess
+import os
+
+from src.config import load_config
+from src.storage.ledger import Ledger
 
 st.set_page_config(
-    page_title="Project Alpha - Prediction Market Engine",
+    page_title="Project Alpha - Arbitrage Bot",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -25,373 +25,258 @@ st.markdown("""
         padding: 15px;
         border-radius: 10px;
     }
-    .positive-roi {
-        background-color: #1a472a;
-        padding: 10px;
-        border-radius: 5px;
+    .positive-pnl {
+        color: #00ff00;
     }
-    .whale-alert {
-        background-color: #2d1b4e;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
+    .negative-pnl {
+        color: #ff0000;
     }
 </style>
 """, unsafe_allow_html=True)
 
-if 'opportunities' not in st.session_state:
-    st.session_state.opportunities = pd.DataFrame()
-if 'whale_trades' not in st.session_state:
-    st.session_state.whale_trades = []
-if 'last_scan' not in st.session_state:
-    st.session_state.last_scan = None
-if 'auto_refresh' not in st.session_state:
-    st.session_state.auto_refresh = False
+st.title("Project Alpha - Complete-Set Arbitrage Bot")
+st.caption("WebSocket-based prediction market arbitrage for Polymarket")
 
-st.title("📈 Project Alpha")
-st.caption("Personal Prediction Market Engine - Cross-Venue Arbitrage & Whale Copy-Trading")
+config_path = st.sidebar.selectbox(
+    "Config File",
+    ["config.yaml", "config_mock.yaml"],
+    index=0
+)
 
-with st.sidebar:
-    st.header("⚙️ Settings")
-    
-    st.subheader("Arbitrage Settings")
-    arb_threshold = st.slider(
-        "Min ROI Threshold (%)",
-        min_value=0.5,
-        max_value=10.0,
-        value=float(config.ARB_THRESHOLD * 100),
-        step=0.5
-    )
-    min_liquidity = st.number_input(
-        "Min Liquidity ($)",
-        min_value=50,
-        max_value=10000,
-        value=config.MIN_LIQUIDITY
-    )
-    
-    st.subheader("Whale Watcher")
-    with st.expander("Monitored Addresses"):
-        whale_addresses = database.get_whale_addresses()
-        if whale_addresses:
-            for addr in whale_addresses:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.code(f"{addr['address'][:10]}...{addr['address'][-6:]}")
-                with col2:
-                    if st.button("❌", key=f"remove_{addr['id']}"):
-                        database.remove_whale_address(addr['address'])
-                        st.rerun()
-        else:
-            st.info("No addresses being monitored")
-        
-        new_address = st.text_input("Add Whale Address", placeholder="0x...")
-        if st.button("Add Address") and new_address:
-            if new_address.startswith("0x") and len(new_address) == 42:
-                database.add_whale_address(new_address)
-                st.success("Address added!")
-                st.rerun()
-            else:
-                st.error("Invalid address format")
-    
-    st.subheader("Telegram Alerts")
-    telegram_status = "✅ Configured" if telegram_bot.is_configured() else "❌ Not Configured"
-    st.write(f"Status: {telegram_status}")
-    
-    if telegram_bot.is_configured():
-        if st.button("Send Test Alert"):
-            if telegram_bot.send_test_message():
-                st.success("Test message sent!")
-            else:
-                st.error("Failed to send message")
+try:
+    config = load_config(config_path)
+except Exception as e:
+    st.error(f"Failed to load config: {e}")
+    st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Arbitrage Scanner", "🐋 Whale Tracker", "📜 Trade History", "📖 About"])
+st.sidebar.markdown("---")
+st.sidebar.subheader("Bot Configuration")
+st.sidebar.write(f"**Venue:** {config.venue.name}")
+st.sidebar.write(f"**Paper Mode:** {config.paper_mode}")
+st.sidebar.write(f"**Min Edge:** {config.strategy.min_edge}")
+st.sidebar.write(f"**Order Size:** ${config.execution.order_size}")
+st.sidebar.write(f"**Max Daily Notional:** ${config.risk.max_daily_notional}")
+
+try:
+    ledger = Ledger(config.data.sqlite_path)
+    ledger.connect()
+except Exception as e:
+    st.warning(f"No ledger database found. Run the bot first to create data.")
+    ledger = None
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Dashboard", 
+    "Opportunities", 
+    "Tradesets", 
+    "Risk Events",
+    "CLI"
+])
 
 with tab1:
-    st.header("Arbitrage Opportunities")
+    st.header("Performance Dashboard")
     
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        if st.button("🔄 Scan Markets", type="primary", use_container_width=True):
-            with st.spinner("Scanning Polymarket and Kalshi..."):
-                try:
-                    df = arb_scanner.scan_for_arbitrage()
-                    st.session_state.opportunities = df
-                    st.session_state.last_scan = datetime.now()
-                    if df.empty:
-                        st.info("No arbitrage opportunities found. This is normal when Polymarket and Kalshi don't have overlapping markets for the same events.")
-                    else:
-                        st.success(f"Found {len(df)} opportunities!")
-                except Exception as e:
-                    st.error(f"Scan failed: {e}")
-    
-    with col2:
-        st.session_state.auto_refresh = st.checkbox("Auto-Refresh (5s)")
-    
-    with col3:
-        if st.session_state.last_scan:
-            st.caption(f"Last scan: {st.session_state.last_scan.strftime('%H:%M:%S')}")
-    
-    st.divider()
-    
-    if not st.session_state.opportunities.empty:
-        df = st.session_state.opportunities
+    if ledger:
+        opp_summary = ledger.get_opportunities_summary()
+        ts_summary = ledger.get_tradesets_summary()
+        risk_events = ledger.get_risk_events_count(hours=24)
         
         col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Opportunities", len(df))
-        with col2:
-            avg_roi = df['roi_percent'].mean() if 'roi_percent' in df.columns else 0
-            st.metric("Avg ROI", f"{avg_roi:.2f}%")
-        with col3:
-            max_roi = df['roi_percent'].max() if 'roi_percent' in df.columns else 0
-            st.metric("Best ROI", f"{max_roi:.2f}%")
-        with col4:
-            total_liquidity = df['min_liquidity'].sum() if 'min_liquidity' in df.columns else 0
-            st.metric("Total Liquidity", f"${total_liquidity:,.0f}")
-        
-        st.divider()
-        
-        def highlight_roi(row):
-            if row['roi_percent'] >= 1.0:
-                return ['background-color: #1a472a'] * len(row)
-            elif row['roi_percent'] >= 0.5:
-                return ['background-color: #3d3d00'] * len(row)
-            return [''] * len(row)
-        
-        display_df = df[[
-            'market_title', 'strategy', 'poly_price', 'kalshi_price',
-            'total_cost', 'spread', 'roi_percent', 'min_liquidity', 'match_score'
-        ]].copy()
-        
-        display_df.columns = [
-            'Market', 'Strategy', 'Poly Price', 'Kalshi Price',
-            'Total Cost', 'Spread', 'ROI %', 'Liquidity', 'Match %'
-        ]
-        
-        display_df['Poly Price'] = display_df['Poly Price'].apply(lambda x: f"{int(x*100)}¢")
-        display_df['Kalshi Price'] = display_df['Kalshi Price'].apply(lambda x: f"{int(x*100)}¢")
-        display_df['Total Cost'] = display_df['Total Cost'].apply(lambda x: f"${x:.2f}")
-        display_df['Spread'] = display_df['Spread'].apply(lambda x: f"${x:.4f}")
-        display_df['ROI %'] = display_df['ROI %'].apply(lambda x: f"{x:.2f}%")
-        display_df['Liquidity'] = display_df['Liquidity'].apply(lambda x: f"${x:,.0f}")
-        display_df['Match %'] = display_df['Match %'].apply(lambda x: f"{x}%")
-        
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-        
-        st.subheader("Quick Actions")
-        col1, col2 = st.columns(2)
         
         with col1:
-            selected_idx = st.selectbox(
-                "Select Opportunity",
-                range(len(df)),
-                format_func=lambda x: f"{df.iloc[x]['market_title'][:50]}... ({df.iloc[x]['roi_percent']:.2f}%)"
+            st.metric(
+                "Opportunities Detected",
+                opp_summary['total_opportunities'],
+                help="Total opportunities detected by the scanner"
             )
         
         with col2:
-            if st.button("📱 Send to Telegram", disabled=not telegram_bot.is_configured()):
-                opp = df.iloc[selected_idx].to_dict()
-                if telegram_bot.send_arb_alert(opp):
-                    st.success("Alert sent to Telegram!")
-                else:
-                    st.error("Failed to send alert")
-    else:
-        st.info("Click 'Scan Markets' to fetch live arbitrage opportunities from Polymarket and Kalshi")
-    
-    st.divider()
-    with st.expander("📊 Market Explorer - View Raw Data"):
-        st.caption("Browse markets from both platforms to see available data")
+            st.metric(
+                "Trades Executed",
+                opp_summary['traded'],
+                help="Number of complete-set trades executed"
+            )
+        
+        with col3:
+            total_pnl = ts_summary['total_pnl']
+            st.metric(
+                "Total PnL",
+                f"${total_pnl:.4f}",
+                delta=f"${total_pnl:.4f}" if total_pnl != 0 else None,
+                delta_color="normal" if total_pnl >= 0 else "inverse"
+            )
+        
+        with col4:
+            st.metric(
+                "Total Fees",
+                f"${ts_summary['total_fees']:.4f}",
+                help="Total fees paid"
+            )
+        
+        st.markdown("---")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("Load Polymarket Markets"):
-                with st.spinner("Fetching from Polymarket..."):
-                    poly_markets = arb_scanner.fetch_polymarket_markets()
-                    st.session_state['poly_markets'] = poly_markets
+            st.subheader("Opportunity Breakdown")
+            if opp_summary['by_decision']:
+                decision_df = pd.DataFrame([
+                    {"Decision": k, "Count": v}
+                    for k, v in opp_summary['by_decision'].items()
+                ])
+                st.bar_chart(decision_df.set_index("Decision"))
+            else:
+                st.info("No opportunities detected yet")
         
         with col2:
-            if st.button("Load Kalshi Markets"):
-                with st.spinner("Fetching from Kalshi..."):
-                    kalshi_markets = arb_scanner.fetch_kalshi_markets()
-                    st.session_state['kalshi_markets'] = kalshi_markets
+            st.subheader("Tradeset Status")
+            if ts_summary['by_status']:
+                status_df = pd.DataFrame([
+                    {"Status": k, "Count": v}
+                    for k, v in ts_summary['by_status'].items()
+                ])
+                st.bar_chart(status_df.set_index("Status"))
+            else:
+                st.info("No tradesets yet")
         
-        if 'poly_markets' in st.session_state and st.session_state['poly_markets']:
-            st.subheader(f"Polymarket ({len(st.session_state['poly_markets'])} markets)")
-            poly_df = pd.DataFrame(st.session_state['poly_markets'][:20])
-            if not poly_df.empty:
-                poly_df['yes_price'] = poly_df['yes_price'].apply(lambda x: f"{x:.2f}")
-                poly_df['no_price'] = poly_df['no_price'].apply(lambda x: f"{x:.2f}")
-                st.dataframe(poly_df[['title', 'yes_price', 'no_price', 'liquidity']], hide_index=True, use_container_width=True)
+        st.markdown("---")
+        st.subheader("Risk Events (Last 24h)")
         
-        if 'kalshi_markets' in st.session_state and st.session_state['kalshi_markets']:
-            st.subheader(f"Kalshi ({len(st.session_state['kalshi_markets'])} markets)")
-            kalshi_df = pd.DataFrame(st.session_state['kalshi_markets'][:20])
-            if not kalshi_df.empty:
-                kalshi_df['yes_price'] = kalshi_df['yes_price'].apply(lambda x: f"{x:.2f}")
-                kalshi_df['no_price'] = kalshi_df['no_price'].apply(lambda x: f"{x:.2f}")
-                st.dataframe(kalshi_df[['title', 'yes_price', 'no_price', 'category']], hide_index=True, use_container_width=True)
+        risk_cols = st.columns(4)
+        with risk_cols[0]:
+            st.metric("Partial Fills", risk_events.get('partial_fill', 0))
+        with risk_cols[1]:
+            st.metric("Rejects", risk_events.get('reject', 0))
+        with risk_cols[2]:
+            st.metric("WS Disconnects", risk_events.get('ws_disconnect', 0))
+        with risk_cols[3]:
+            st.metric("Kill Switch", risk_events.get('kill_switch', 0))
+    else:
+        st.info("No data available. Run the bot to generate data.")
 
 with tab2:
-    st.header("Whale Trade Monitor")
+    st.header("Opportunities Log")
     
-    if st.button("🔄 Load Recent Whale Trades", type="primary"):
-        db_trades = database.get_recent_whale_trades(50)
-        st.session_state.whale_trades = db_trades
-        if db_trades:
-            st.success(f"Loaded {len(db_trades)} recent whale trades")
+    if ledger:
+        cursor = ledger._conn.cursor()
+        cursor.execute("""
+            SELECT market_id, timestamp, decision, yes_ask, no_ask, 
+                   sum_cost, edge, reason
+            FROM opportunities 
+            ORDER BY timestamp DESC 
+            LIMIT 100
+        """)
+        rows = cursor.fetchall()
+        
+        if rows:
+            df = pd.DataFrame(rows, columns=[
+                "Market ID", "Timestamp", "Decision", "YES Ask", "NO Ask",
+                "Sum Cost", "Edge", "Reason"
+            ])
+            df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit='s')
+            st.dataframe(df, use_container_width=True)
         else:
-            st.warning("No whale trades recorded yet. Add whale addresses and run the whale watcher to capture trades.")
-    
-    st.divider()
-    
-    if st.session_state.whale_trades:
-        for trade in st.session_state.whale_trades:
-            with st.container():
-                st.markdown(f"""
-                <div class="whale-alert">
-                    <h4>🐋 {trade.get('market_title', 'Unknown Market')}</h4>
-                    <p><b>Whale:</b> {trade.get('whale_address', 'Unknown')[:10]}...</p>
-                    <p><b>Action:</b> {trade.get('side', 'Unknown').upper()} {trade.get('outcome', '')}</p>
-                    <p><b>Amount:</b> ${trade.get('amount_usdc', 0):,.2f} USDC @ {trade.get('price', 0):.2f}</p>
-                    <p><small>{trade.get('timestamp', '')}</small></p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if telegram_bot.is_configured():
-                    if st.button(f"📱 Alert", key=f"whale_alert_{trade.get('timestamp')}"):
-                        telegram_bot.send_whale_alert(trade)
-                        st.success("Alert sent!")
+            st.info("No opportunities logged yet")
     else:
-        st.info("No whale trades detected. Click 'Load Recent Whale Trades' or 'Load Demo Whales' to view activity.")
-    
-    st.divider()
-    st.subheader("Real-Time Monitoring")
-    st.info("""
-    **WebSocket Monitoring**: The whale watcher runs as a background service.
-    
-    To start real-time monitoring:
-    ```bash
-    python whale_watch.py
-    ```
-    
-    Detected trades will be saved to the database and appear here on refresh.
-    """)
+        st.info("No data available")
 
 with tab3:
-    st.header("Trade History")
+    st.header("Tradesets")
     
-    trades = database.get_trade_history()
-    
-    if trades:
-        trade_df = pd.DataFrame(trades)
-        st.dataframe(trade_df, use_container_width=True, hide_index=True)
+    if ledger:
+        cursor = ledger._conn.cursor()
+        cursor.execute("""
+            SELECT id, market_id, status, yes_cost, no_cost, 
+                   total_cost, total_fees, realized_pnl, created_at
+            FROM tradesets 
+            ORDER BY created_at DESC 
+            LIMIT 100
+        """)
+        rows = cursor.fetchall()
         
-        total_pnl = sum(t.get('pnl', 0) or 0 for t in trades)
-        st.metric("Total P&L", f"${total_pnl:,.2f}")
+        if rows:
+            df = pd.DataFrame(rows, columns=[
+                "ID", "Market ID", "Status", "YES Cost", "NO Cost",
+                "Total Cost", "Fees", "Realized PnL", "Created At"
+            ])
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("No tradesets yet")
     else:
-        st.info("No trade history yet. Execute trades to build your history.")
-    
-    st.divider()
-    
-    with st.expander("Log Manual Trade"):
-        col1, col2 = st.columns(2)
-        with col1:
-            trade_type = st.selectbox("Trade Type", ["arbitrage", "copy_trade", "manual"])
-            venue = st.selectbox("Venue", ["polymarket", "kalshi", "both"])
-            market_title = st.text_input("Market Title")
-        with col2:
-            side = st.selectbox("Side", ["buy", "sell"])
-            amount = st.number_input("Amount ($)", min_value=0.0)
-            price = st.number_input("Price", min_value=0.0, max_value=1.0, step=0.01)
-        
-        pnl = st.number_input("P&L ($)", step=0.01)
-        notes = st.text_area("Notes")
-        
-        if st.button("Log Trade"):
-            database.log_trade(
-                trade_type, venue, "", market_title,
-                side, amount, price, pnl, notes
-            )
-            st.success("Trade logged!")
-            st.rerun()
+        st.info("No data available")
 
 with tab4:
-    st.header("About Project Alpha")
+    st.header("Risk Events")
+    
+    if ledger:
+        cursor = ledger._conn.cursor()
+        cursor.execute("""
+            SELECT event_type, market_id, details, created_at
+            FROM risk_events 
+            ORDER BY created_at DESC 
+            LIMIT 100
+        """)
+        rows = cursor.fetchall()
+        
+        if rows:
+            df = pd.DataFrame(rows, columns=[
+                "Event Type", "Market ID", "Details", "Created At"
+            ])
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("No risk events logged")
+    else:
+        st.info("No data available")
+
+with tab5:
+    st.header("CLI Commands")
     
     st.markdown("""
-    ## Personal Prediction Market Engine
+    Use the CLI to control the bot. Available commands:
     
-    Project Alpha is a lightweight trading engine that automates the detection and execution
-    of high-probability trades on prediction markets.
+    ```bash
+    # Run the bot in paper mode
+    python -m src.cli.commands run --paper -c config.yaml
     
-    ### Core Strategies
+    # Run with mock adapter (for testing)
+    python -m src.cli.commands run --paper -c config_mock.yaml
     
-    **1. Cross-Venue Arbitrage**
-    - Exploits price discrepancies between Kalshi (regulated) and Polymarket (crypto)
-    - Identifies when YES + NO prices across venues are less than $1.00
-    - Guarantees risk-free profit when executed simultaneously
+    # Check bot status
+    python -m src.cli.commands status
     
-    **2. Whale Copy-Trading**
-    - Monitors high-conviction trades from specific wallet addresses
-    - Detects large trades before the broader market reacts
-    - Provides real-time alerts for quick decision-making
-    
-    ### System Components
-    
-    | Module | Description |
-    |--------|-------------|
-    | **Arbitrage Scanner** | Polls market APIs, fuzzy-matches events, calculates spreads |
-    | **Whale Watchdog** | WebSocket monitor for large Polymarket trades |
-    | **Telegram Bot** | Push notifications for opportunities |
-    | **Dashboard** | This Streamlit UI for visualization |
-    
-    ### Configuration
-    
-    Set the following environment variables for full functionality:
-    
-    - `TELEGRAM_BOT_TOKEN` - Your Telegram bot token
-    - `TELEGRAM_CHAT_ID` - Your Telegram chat/channel ID
-    - `KALSHI_API_KEY` - (Optional) Kalshi API key for authenticated requests
-    
-    ### Technology Stack
-    
-    - **Language**: Python 3.11+
-    - **Frontend**: Streamlit
-    - **Database**: SQLite
-    - **APIs**: Polymarket Gamma API, Kalshi v2 API
-    - **Real-time**: WebSockets for whale monitoring
+    # Generate performance report
+    python -m src.cli.commands report --days 7
+    ```
     """)
     
-    st.divider()
+    st.subheader("Quick Commands")
     
-    st.subheader("System Status")
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.metric("Database", "✅ Connected")
-        st.caption(f"Path: {config.DATABASE_PATH}")
+        if st.button("Show Status"):
+            result = subprocess.run(
+                ["python", "-m", "src.cli.commands", "status", "-c", config_path],
+                capture_output=True,
+                text=True,
+                cwd="/home/runner/workspace"
+            )
+            st.code(result.stdout or result.stderr)
     
     with col2:
-        telegram_status = "✅ Ready" if telegram_bot.is_configured() else "⚠️ Not Configured"
-        st.metric("Telegram", telegram_status)
-    
-    with col3:
-        whale_count = len(database.get_whale_addresses())
-        st.metric("Monitored Whales", whale_count)
+        if st.button("Generate Report"):
+            result = subprocess.run(
+                ["python", "-m", "src.cli.commands", "report", "-c", config_path],
+                capture_output=True,
+                text=True,
+                cwd="/home/runner/workspace"
+            )
+            st.code(result.stdout or result.stderr)
 
-if st.session_state.auto_refresh:
-    import time
-    time.sleep(config.REFRESH_INTERVAL)
-    try:
-        df = arb_scanner.scan_for_arbitrage()
-        st.session_state.opportunities = df
-        st.session_state.last_scan = datetime.now()
-    except Exception as e:
-        print(f"Auto-scan error: {e}")
+if ledger:
+    ledger.close()
+
+st.sidebar.markdown("---")
+st.sidebar.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+if st.sidebar.button("Refresh Data"):
     st.rerun()

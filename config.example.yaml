@@ -1,0 +1,41 @@
+venue:
+  name: polymarket
+  api_url: https://clob.polymarket.com
+  ws_url: wss://ws-subscriptions-clob.polymarket.com/ws/market
+
+markets:
+  - 0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af
+
+strategy:
+  min_edge: 0.01
+  cost_buffer: 0.005
+  min_depth: 10
+
+execution:
+  order_size: 10
+  max_attempts_per_round: 3
+  order_timeout_seconds: 5.0
+  max_inflight_seconds: 30.0
+  cooldown_seconds: 2.0
+
+risk:
+  max_daily_notional: 1000
+  max_open_positions: 5
+  halt_on_partial_fill: true
+  max_partial_fills_per_hour: 3
+  max_rejects_per_hour: 10
+  max_ws_disconnects_per_hour: 5
+
+data:
+  sqlite_path: arb_ledger.db
+  log_level: INFO
+  log_json: false
+
+websocket:
+  reconnect_delay_initial: 1.0
+  reconnect_delay_max: 60.0
+  reconnect_backoff_factor: 2.0
+  heartbeat_interval: 30.0
+  snapshot_on_reconnect: true
+
+paper_mode: true
