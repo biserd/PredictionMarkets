@@ -193,6 +193,17 @@ class PolymarketAdapter(VenueAdapter):
             logger.warning(f"Invalid JSON message: {message[:100]}")
             return
 
+        if isinstance(data, list):
+            for item in data:
+                await self._process_single_message(item)
+        else:
+            await self._process_single_message(data)
+
+    async def _process_single_message(self, data: Dict[str, Any]) -> None:
+        """Process a single WebSocket message."""
+        if not isinstance(data, dict):
+            return
+            
         event_type = data.get("event_type")
 
         if event_type == "book":
@@ -204,7 +215,7 @@ class PolymarketAdapter(VenueAdapter):
         elif event_type == "tick_size_change":
             pass
         else:
-            logger.debug(f"Unknown event type: {event_type}")
+            pass
 
     async def _handle_book_event(self, data: Dict[str, Any]) -> None:
         """Handle order book update event."""
@@ -391,39 +402,40 @@ class PolymarketAdapter(VenueAdapter):
             return None
 
     async def list_markets(self, active_only: bool = True) -> List[MarketInfo]:
-        """List available markets."""
+        """List available markets from Gamma API (more current data)."""
         session = await self._get_session()
-        url = f"{self.venue_config.api_url}/markets"
+        gamma_url = "https://gamma-api.polymarket.com/events"
 
         try:
-            params = {"active": "true"} if active_only else {}
-            async with session.get(url, params=params) as resp:
+            params = {"limit": 20, "active": "true", "closed": "false"}
+            
+            async with session.get(gamma_url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
+                    logger.warning(f"Gamma API returned {resp.status}")
                     return []
 
-                data = await resp.json()
+                events = await resp.json()
                 markets = []
 
-                for m in data:
-                    tokens = m.get("tokens", [])
-                    yes_token = next((t for t in tokens if t.get("outcome") == "Yes"), None)
-                    no_token = next((t for t in tokens if t.get("outcome") == "No"), None)
+                for event in events:
+                    for m in event.get("markets", []):
+                        clob_ids = m.get("clobTokenIds", [])
+                        if len(clob_ids) >= 2:
+                            markets.append(MarketInfo(
+                                market_id=m.get("conditionId", ""),
+                                condition_id=m.get("conditionId", ""),
+                                question=m.get("question", ""),
+                                yes_token_id=clob_ids[0],
+                                no_token_id=clob_ids[1],
+                                min_tick_size=Decimal("0.01"),
+                                active=m.get("active", True),
+                            ))
 
-                    if yes_token and no_token:
-                        markets.append(MarketInfo(
-                            market_id=m.get("condition_id", ""),
-                            condition_id=m.get("condition_id", ""),
-                            question=m.get("question", ""),
-                            yes_token_id=yes_token.get("token_id", ""),
-                            no_token_id=no_token.get("token_id", ""),
-                            min_tick_size=Decimal(str(m.get("minimum_tick_size", "0.01"))),
-                            active=m.get("active", False),
-                        ))
-
+                logger.info(f"Found {len(markets)} active markets from Gamma API")
                 return markets
 
         except Exception as e:
-            logger.error(f"Error listing markets: {e}")
+            logger.error(f"Error listing markets from Gamma API: {e}")
             return []
 
     async def place_order(

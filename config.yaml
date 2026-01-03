@@ -1,6 +1,7 @@
 venue:
   name: polymarket
   api_url: https://clob.polymarket.com
+  gamma_api_url: https://gamma-api.polymarket.com
   ws_url: wss://ws-subscriptions-clob.polymarket.com/ws/market
 
 markets: []
