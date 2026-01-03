@@ -1,0 +1,391 @@
+Below is a **complete BRD** you can paste into Replit as a build prompt. It’s written to produce a **private, personal PoC** prediction-market bot that uses **websockets** to detect and execute **complete-set arbitrage** (buy YES + NO when their combined cost is < $1 after costs). It’s **venue-agnostic** via an adapter interface (so you can plug Polymarket/Kalshi/other later).
+
+---
+
+## BRD: Private Prediction-Market Complete-Set Arbitrage Bot (WebSocket, PoC)
+
+### 1) Background and Goal
+
+I want a private, personal “proof of concept” trading bot that detects **inefficient binary prediction markets** where:
+
+* A contract pays **$1** at resolution (YES pays $1 if outcome occurs; NO pays $1 if outcome does not occur).
+* There is an inefficiency where **best YES ask + best NO ask < $1** (after fees/slippage), enabling “complete-set” arbitrage.
+
+This bot is **not** a product, not multi-tenant, not a Telegram bot, and not meant for other users. It’s for **personal experimentation**.
+
+### 2) Success Criteria (PoC)
+
+The PoC is successful if, over a defined test window:
+
+* The bot can **reliably connect to websocket market data**, maintain a consistent top-of-book state, and identify opportunities.
+* The bot can execute trades with guardrails that prevent catastrophic partial-fill exposure.
+* The bot produces a **verifiable ledger** of opportunities, attempts, fills, fees, and PnL.
+* Net profit is **positive after costs** (fees + slippage) on completed sets.
+
+**Default evaluation window**:
+
+* Minimum: **50 completed sets** OR 7 days of running (whichever first)
+* PoC threshold: average net profit per completed set > 0 (configurable target)
+
+### 3) Scope
+
+#### In Scope
+
+* WebSocket connection to a prediction venue’s market data (order book updates).
+* Maintain top-of-book (best ask price + available size) for YES and NO.
+* Detect complete-set arb opportunities and decide to trade based on configurable thresholds.
+* Execute trades with robust safeguards:
+
+  * size/depth checks
+  * timeouts
+  * cancel logic
+  * “in-flight lock”
+  * kill switch
+* Ledger storage in SQLite (local).
+* CLI and simple local dashboard view (optional but preferred).
+* Venue adapter interface so we can implement Polymarket/Kalshi later.
+
+#### Out of Scope (Explicit)
+
+* No Telegram/Discord bot UI.
+* No public hosting, no multi-user auth, no subscription billing.
+* No marketing site.
+* No advanced ML/LLM prediction strategies (only arb).
+* No guarantee of profitability.
+* No evasion of platform rules. The bot must be configurable to be compliant with venue policies and rate limits.
+
+### 4) Key Assumptions / Constraints
+
+* This is for personal use; API keys are local env vars.
+* Venue provides (a) websocket market data and (b) authenticated order placement via API.
+* Must not hammer APIs; websocket-first; periodic REST snapshot allowed.
+* **Safety first**: partial fills are the primary risk; bot must protect against being stuck with a single leg.
+
+### 5) Users / Personas
+
+* **Operator (me)**: runs the bot locally, configures thresholds, reviews logs/ledger, and evaluates PoC results.
+
+### 6) Functional Requirements
+
+#### FR-1: Configuration
+
+The bot must load configuration from:
+
+* `.env` for secrets (API keys)
+* `config.yaml` (or `config.json`) for strategy parameters
+
+Config fields include:
+
+* Venue name (adapter selection)
+* Market identifiers to monitor (allow list)
+* Strategy thresholds:
+
+  * `min_edge` (minimum expected profit per set after costs)
+  * `cost_buffer` (fee+slippage conservative buffer)
+  * `min_depth` (minimum size available at best ask for each leg)
+* Execution:
+
+  * `order_size` (base size)
+  * `max_attempts_per_round`
+  * `order_timeout_seconds`
+  * `max_inflight_seconds`
+* Risk controls:
+
+  * `max_daily_notional`
+  * `max_open_positions`
+  * `halt_on_partial_fill` (true by default)
+  * `kill_switch_conditions` (repeated rejects, repeated partials, ws instability)
+* Data:
+
+  * SQLite path
+  * log level
+* Runtime:
+
+  * websocket reconnect behavior, heartbeat, backoff
+
+#### FR-2: WebSocket Market Data Ingestion
+
+* Connect to WS feed.
+* Subscribe to specified markets and instruments (YES, NO).
+* Maintain an **OrderBookState** with:
+
+  * best ask price + available size for YES
+  * best ask price + available size for NO
+  * last update timestamp
+* Detect and handle gaps:
+
+  * If venue provides sequence numbers, validate them.
+  * On reconnect, perform REST snapshot rebuild.
+
+#### FR-3: Opportunity Detection (Signal Engine)
+
+On every meaningful book update:
+
+* Compute:
+
+  * `sum_cost = yes_best_ask + no_best_ask`
+  * `edge = 1.00 - sum_cost - cost_buffer`
+* Emit a “TRADE_SIGNAL” only if:
+
+  * `edge >= min_edge`
+  * both legs meet depth requirement (`yes_size >= order_size`, `no_size >= order_size`)
+  * not in cooldown and not currently in-flight
+* Record every detected opportunity to the ledger (even if not traded), with reason if skipped.
+
+#### FR-4: Execution Engine (Complete-Set Trade)
+
+When a signal is emitted:
+
+* Acquire an “in-flight” lock for that market to prevent concurrent attempts.
+* Place orders for both legs (YES and NO) using safe execution logic:
+
+  * Prefer **limit orders** at the current best ask (or one tick higher if configurable).
+  * If IOC is supported, use it to reduce partial fill risk.
+* Track fill status for each leg:
+
+  * If both filled within timeout => success.
+  * If only one filled => immediately trigger **protective action**:
+
+    * cancel unfilled order
+    * attempt to unwind/hedge the filled leg (sell back) if possible
+    * mark attempt as partial-fill incident
+    * optionally halt trading for that market or globally based on config
+* After execution attempt:
+
+  * Release in-flight lock
+  * Apply a short cooldown before next attempt.
+
+#### FR-5: Ledger and Auditability
+
+Store all important events in SQLite:
+Tables (minimum):
+
+1. `market_ticks` (optional sampling)
+2. `opportunities`
+
+* market_id, timestamp
+* yes_ask, no_ask, yes_size, no_size
+* sum_cost, edge, cost_buffer
+* decision: traded/skipped + reason
+
+3. `orders`
+
+* order_id, market_id, side (YES/NO), action (BUY/SELL), price, size, status, timestamps
+
+4. `fills`
+
+* order_id, fill_id, filled_size, avg_price, fee, timestamp
+
+5. `tradesets` (the arb unit)
+
+* tradeset_id, market_id
+* yes_cost, no_cost, total_cost, fees
+* expected_payout (usually 1.00 * size)
+* realized_pnl (at resolution or mark-to-market if supported)
+* outcome resolution metadata
+
+Ledger must enable a full reconstruction: “why did it trade, what happened, did it profit.”
+
+#### FR-6: CLI Controls
+
+Provide a CLI with commands:
+
+* `run` : start the bot
+* `status` : print current WS status, monitored markets, latest book, in-flight state
+* `halt` : stop trading (soft halt)
+* `resume`
+* `report` : generate summary stats from ledger:
+
+  * opportunities found, attempts, success rate
+  * partial fills
+  * avg edge, avg net pnl per set
+  * fees totals
+  * uptime / disconnect counts
+
+#### FR-7: Kill Switch / Safety
+
+Kill switch triggers (configurable), e.g.:
+
+* N partial fills in M minutes
+* N order rejects in M minutes
+* WS disconnects exceed threshold
+* Daily notional exceeds limit
+  Actions:
+* stop trading immediately
+* keep logging
+* require manual resume
+
+### 7) Non-Functional Requirements
+
+#### NFR-1: Reliability
+
+* Auto-reconnect websocket with exponential backoff.
+* Heartbeat monitoring.
+* On reconnect: snapshot + resubscribe + resume.
+
+#### NFR-2: Performance
+
+* Process WS updates with low latency.
+* Must handle bursts without crashing (queue with backpressure).
+
+#### NFR-3: Security
+
+* Secrets only via `.env`.
+* Never log raw API keys.
+* Local-only by default.
+
+#### NFR-4: Compliance / Safety Note
+
+The implementation must be configurable to respect venue rate limits and policies. No attempts to bypass restrictions.
+
+### 8) System Design
+
+#### Components
+
+1. **VenueAdapter** (interface)
+
+* `connect_ws()`, `subscribe_markets()`
+* `get_snapshot_rest(market_id)`
+* `place_order()`, `cancel_order()`
+* `get_order_status()` / `listen_fills_ws()` if available
+
+2. **OrderBookState**
+
+* in-memory, per market: best ask prices/sizes for YES/NO
+
+3. **SignalEngine**
+
+* pure logic: state -> opportunity decision
+
+4. **ExecutionEngine**
+
+* state machine managing order placement, timeouts, cancellations, hedges
+
+5. **Ledger**
+
+* SQLite persistence + reporting queries
+
+6. **Runner / Supervisor**
+
+* orchestrates tasks, handles shutdown, kill switch
+
+#### Recommended Tech Stack (Python)
+
+* Python 3.11+
+* `asyncio`
+* `websockets` (or `aiohttp` WS client)
+* `httpx` (async) for REST
+* `pydantic` for config models
+* `sqlite` via `aiosqlite`
+* `rich` for CLI output
+* `structlog` or `logging` JSON logs
+
+### 9) Execution State Machine (High-Level)
+
+States:
+
+* `IDLE` -> `SIGNAL_DETECTED` -> `PLACING_ORDERS` -> `WAITING_FILLS`
+* `SUCCESS` OR `PARTIAL_FILL_PROTECT` OR `FAILED`
+* `COOLDOWN` -> back to `IDLE`
+
+### 10) Testing Requirements
+
+* Unit tests:
+
+  * edge calculation
+  * signal gating (depth, thresholds, cooldown)
+* Simulated adapter tests:
+
+  * feed synthetic WS book updates and confirm bot behavior
+* “Paper mode”:
+
+  * run without placing orders; just log opportunities and compute theoretical edge
+
+### 11) Deliverables
+
+The repo must include:
+
+* `/src` code with clean module boundaries
+* `config.example.yaml`
+* `.env.example`
+* `README.md` with:
+
+  * setup steps
+  * how to run in paper mode vs live mode
+  * how to generate report
+* SQLite schema migrations or initialization script
+* A minimal “MockVenueAdapter” for local testing
+
+### 12) Suggested Repo Structure
+
+* `src/`
+
+  * `main.py`
+  * `config.py`
+  * `adapters/`
+
+    * `base.py` (VenueAdapter interface)
+    * `mock.py`
+    * `venue_placeholder.py` (stub where I’ll implement real venue later)
+  * `marketdata/`
+
+    * `orderbook_state.py`
+    * `ws_client.py`
+  * `strategy/`
+
+    * `signal_engine.py`
+  * `execution/`
+
+    * `executor.py`
+    * `risk.py`
+  * `storage/`
+
+    * `ledger.py`
+    * `schema.sql`
+  * `cli/`
+
+    * `commands.py`
+  * `reporting/`
+
+    * `report.py`
+* `tests/`
+* `README.md`
+
+### 13) Operator Workflow
+
+1. Run `paper` mode for 24–48 hours:
+
+   * Confirm opportunities appear and log properly.
+2. Enable live mode with minimal size:
+
+   * Validate fill logic and settlement behavior.
+3. Review `report` output daily:
+
+   * partial fills, rejects, net pnl estimate.
+
+### 14) Acceptance Criteria (Must-Have)
+
+* Bot runs continuously for 6+ hours without crashing, with at least one WS reconnect handled cleanly.
+* Ledger contains opportunity and execution records with coherent IDs and timestamps.
+* Kill switch works (triggerable by config thresholds).
+* Paper mode produces a summary report with:
+
+  * count of opportunities, average edge, and distribution of sum_cost.
+
+---
+
+### Replit Build Instruction (Add This At The Top of Your Implementation)
+
+You are building a **private, personal PoC trading bot**. Prioritize:
+
+1. correctness and auditability (ledger),
+2. partial-fill safety,
+3. robust websocket reconnect + snapshot resync,
+4. clean adapter interface (venue-agnostic),
+5. paper mode first, then live mode.
+
+Do not build a product UI; do not build multi-user features.
+
+---
+
+If you tell me **which venue you’re actually using first** (Polymarket vs Kalshi vs other), I can tailor the adapter section into concrete endpoints/events (WS channels, fill events, order placement patterns) while keeping the same BRD structure.
